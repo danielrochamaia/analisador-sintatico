@@ -517,8 +517,21 @@ class TontoAnalyzerGUI:
                                                  values=('', len(summary['relations']), ''))
             for rel in summary['relations']:
                 tipo = "Interna" if rel['internal'] else "Externa"
-                details = f"Linha {rel['line']}, Tipo: {tipo}, Estereótipo: {rel['stereotype']}"
-                nome = rel.get('name', rel.get('target', 'sem nome'))
+                estereotipo = rel.get('stereotype', 'sem estereótipo')
+
+                # Criar nome descritivo para a relação
+                if rel.get('name'):
+                    # Se tem nome explícito, usar ele
+                    nome = rel['name']
+                else:
+                    # Se não tem nome, criar descrição baseada em estereótipo e alvo
+                    target = rel.get('target', 'desconhecido')
+                    if estereotipo and estereotipo != 'sem estereótipo':
+                        nome = f"{estereotipo} → {target}"
+                    else:
+                        nome = f"→ {target}"
+
+                details = f"Linha {rel['line']}, Tipo: {tipo}, Estereótipo: {estereotipo}"
                 self.syntactic_tree.insert(rel_node, tk.END, text=f"  {nome}",
                                          values=(nome, '', details))
 
