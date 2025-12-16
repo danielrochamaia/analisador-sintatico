@@ -70,7 +70,10 @@ RESERVED_WORDS = {
     'relation': 'RELATION',
     'overlapping': 'OVERLAPPING',
     'incomplete': 'INCOMPLETE',
-    'specializes': 'SPECIALIZES'
+    'specializes': 'SPECIALIZES',
+    'of': 'OF',
+    'relators': 'RELATORS',
+    'intrinsic-modes': 'INTRINSIC_MODES'
 }
 
 # Tipos de dados nativos

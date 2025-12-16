@@ -60,6 +60,37 @@ class TontoParser:
             'total_errors': len(self.errors)
         }
 
+    def _process_class_body(self, body):
+        """
+        Processa o corpo de uma classe para vincular estereótipos standalone às relações seguintes.
+        Quando encontra um standalone_stereotype seguido de uma relação interna,
+        aplica o estereótipo à relação.
+        """
+        if not body:
+            return []
+
+        processed = []
+        pending_stereotype = None
+
+        for i, member in enumerate(body):
+            # Verifica se é um estereótipo standalone
+            if isinstance(member, dict) and member.get('type') == 'pending_stereotype':
+                # Guarda o estereótipo para aplicar ao próximo membro
+                pending_stereotype = member.get('stereotype')
+                continue  # Não adiciona à lista processada
+
+            # Se for uma relação interna e há um estereótipo pendente
+            if isinstance(member, dict) and pending_stereotype:
+                # Se for uma relação interna, aplica o estereótipo
+                if member.get('internal') and member.get('stereotype') is None:
+                    member['stereotype'] = pending_stereotype
+                    pending_stereotype = None
+
+            # Adiciona o membro processado
+            processed.append(member)
+
+        return processed
+
     # ========================================================================
     # REGRAS DE PRODUÇÃO
     # ========================================================================
@@ -83,7 +114,8 @@ class TontoParser:
             p[0] = p[1] + [p[2]]
 
     def p_import_statement(self, p):
-        '''import_statement : IMPORT CLASS_NAME'''
+        '''import_statement : IMPORT CLASS_NAME
+                            | IMPORT RELATION_NAME'''
         import_info = {
             'module': p[2],
             'line': p.lineno(1)
@@ -101,7 +133,7 @@ class TontoParser:
 
     # 1. DECLARAÇÃO DE PACOTES
     def p_package_with_braces(self, p):
-        '''package : PACKAGE CLASS_NAME LBRACE declarations RBRACE'''
+        '''package : PACKAGE package_name LBRACE declarations RBRACE'''
         package_info = {
             'name': p[2],
             'declarations': p[4],
@@ -111,7 +143,7 @@ class TontoParser:
         p[0] = package_info
 
     def p_package_without_braces(self, p):
-        '''package : PACKAGE CLASS_NAME declarations'''
+        '''package : PACKAGE package_name declarations'''
         package_info = {
             'name': p[2],
             'declarations': p[3],
@@ -119,6 +151,11 @@ class TontoParser:
         }
         self.packages.append(package_info)
         p[0] = package_info
+
+    def p_package_name(self, p):
+        '''package_name : CLASS_NAME
+                        | RELATION_NAME'''
+        p[0] = p[1]
 
     def p_declarations_empty(self, p):
         '''declarations : '''
@@ -163,11 +200,14 @@ class TontoParser:
 
     def p_class_declaration_with_body(self, p):
         '''class_declaration : class_stereotype CLASS_NAME LBRACE class_body RBRACE'''
+        # Processar corpo da classe para vincular estereótipos standalone
+        processed_body = self._process_class_body(p[4])
+
         class_info = {
             'stereotype': p[1],
             'name': p[2],
             'parents': [],
-            'body': p[4],
+            'body': processed_body,
             'line': p.lineno(2)
         }
         self.classes.append(class_info)
@@ -175,15 +215,81 @@ class TontoParser:
 
     def p_class_declaration_with_specializes_and_body(self, p):
         '''class_declaration : class_stereotype CLASS_NAME SPECIALIZES parent_list LBRACE class_body RBRACE'''
+        # Processar corpo da classe para vincular estereótipos standalone
+        processed_body = self._process_class_body(p[6])
+
         class_info = {
             'stereotype': p[1],
             'name': p[2],
             'parents': p[4],
-            'body': p[6],
+            'body': processed_body,
             'line': p.lineno(2)
         }
         self.classes.append(class_info)
         p[0] = class_info
+
+    # Declarações com "of <partition>"
+    def p_class_declaration_with_partition(self, p):
+        '''class_declaration : class_stereotype CLASS_NAME OF partition_name'''
+        class_info = {
+            'stereotype': p[1],
+            'name': p[2],
+            'partition': p[4],
+            'parents': [],
+            'body': [],
+            'line': p.lineno(2)
+        }
+        self.classes.append(class_info)
+        p[0] = class_info
+
+    def p_class_declaration_with_partition_and_specializes(self, p):
+        '''class_declaration : class_stereotype CLASS_NAME OF partition_name SPECIALIZES parent_list'''
+        class_info = {
+            'stereotype': p[1],
+            'name': p[2],
+            'partition': p[4],
+            'parents': p[6],
+            'body': [],
+            'line': p.lineno(2)
+        }
+        self.classes.append(class_info)
+        p[0] = class_info
+
+    def p_class_declaration_with_partition_and_body(self, p):
+        '''class_declaration : class_stereotype CLASS_NAME OF partition_name LBRACE class_body RBRACE'''
+        processed_body = self._process_class_body(p[6])
+
+        class_info = {
+            'stereotype': p[1],
+            'name': p[2],
+            'partition': p[4],
+            'parents': [],
+            'body': processed_body,
+            'line': p.lineno(2)
+        }
+        self.classes.append(class_info)
+        p[0] = class_info
+
+    def p_class_declaration_with_partition_specializes_and_body(self, p):
+        '''class_declaration : class_stereotype CLASS_NAME OF partition_name SPECIALIZES parent_list LBRACE class_body RBRACE'''
+        processed_body = self._process_class_body(p[8])
+
+        class_info = {
+            'stereotype': p[1],
+            'name': p[2],
+            'partition': p[4],
+            'parents': p[6],
+            'body': processed_body,
+            'line': p.lineno(2)
+        }
+        self.classes.append(class_info)
+        p[0] = class_info
+
+    def p_partition_name(self, p):
+        '''partition_name : FUNCTIONAL_COMPLEXES
+                          | RELATORS
+                          | INTRINSIC_MODES'''
+        p[0] = p[1]
 
     # Lista de classes pai (para herança)
     def p_parent_list_single(self, p):
@@ -241,10 +347,12 @@ class TontoParser:
         }
 
     def p_attribute_declaration(self, p):
-        '''attribute_declaration : RELATION_NAME COLON type_reference'''
+        '''attribute_declaration : RELATION_NAME COLON type_reference
+                                  | RELATION_NAME COLON type_reference cardinality'''
         attr_info = {
             'name': p[1],
             'type': p[3],
+            'cardinality': p[4] if len(p) == 5 else None,
             'line': p.lineno(1)
         }
         self.attributes.append(attr_info)
@@ -292,18 +400,23 @@ class TontoParser:
         p[0] = enum_info
 
     def p_instance_list_single(self, p):
-        '''instance_list : CLASS_NAME'''
+        '''instance_list : instance_name'''
         p[0] = [p[1]]
 
     def p_instance_list_multiple(self, p):
-        '''instance_list : instance_list COMMA CLASS_NAME'''
+        '''instance_list : instance_list COMMA instance_name'''
         p[0] = p[1] + [p[3]]
+
+    def p_instance_name(self, p):
+        '''instance_name : CLASS_NAME
+                         | INSTANCE_NAME'''
+        p[0] = p[1]
 
     # 5. GENERALIZAÇÕES (GENERALIZATION SETS)
 
     # Forma simples
     def p_generalization_simple(self, p):
-        '''generalization_declaration : genset_modifiers GENSET CLASS_NAME WHERE GENERAL CLASS_NAME SPECIFICS class_name_list'''
+        '''generalization_declaration : genset_modifiers GENSET genset_name WHERE GENERAL CLASS_NAME SPECIFICS class_name_list'''
         genset_info = {
             'name': p[3],
             'modifiers': p[1],
@@ -316,7 +429,7 @@ class TontoParser:
 
     # Forma completa
     def p_generalization_complete(self, p):
-        '''generalization_declaration : genset_modifiers GENSET CLASS_NAME LBRACE genset_body RBRACE'''
+        '''generalization_declaration : genset_modifiers GENSET genset_name LBRACE genset_body RBRACE'''
         genset_info = {
             'name': p[3],
             'modifiers': p[1],
@@ -326,6 +439,11 @@ class TontoParser:
         }
         self.gensets.append(genset_info)
         p[0] = genset_info
+
+    def p_genset_name(self, p):
+        '''genset_name : CLASS_NAME
+                       | RELATION_NAME'''
+        p[0] = p[1]
 
     def p_genset_modifiers_empty(self, p):
         '''genset_modifiers : '''
@@ -402,11 +520,40 @@ class TontoParser:
                                          | relation_stereotype arrow_symbol CLASS_NAME
                                          | relation_stereotype RELATION_NAME arrow_symbol CLASS_NAME
                                          | arrow_symbol RELATION_NAME arrow_symbol cardinality CLASS_NAME
-                                         | arrow_symbol RELATION_NAME arrow_symbol CLASS_NAME'''
-        # Verificar se começa com estereótipo ou com seta
+                                         | arrow_symbol RELATION_NAME arrow_symbol CLASS_NAME
+                                         | cardinality arrow_symbol cardinality CLASS_NAME
+                                         | cardinality arrow_symbol CLASS_NAME'''
+        # Verificar se começa com estereótipo, seta ou cardinalidade
         starts_with_arrow = (p[1] == '--' or p[1] == '<>--' or p[1] == '--<>')
+        starts_with_cardinality = isinstance(p[1], dict) and 'min' in p[1]
 
-        if starts_with_arrow:
+        if starts_with_cardinality:
+            # Sintaxe: [card] -- [card] Classe  OU  [card] -- Classe
+            if len(p) == 5:
+                # [1..*] -- [1] Unidade_Basica_De_Saude
+                relation_info = {
+                    'stereotype': None,
+                    'name': None,
+                    'source_cardinality': p[1],
+                    'arrow': p[2],
+                    'target_cardinality': p[3],
+                    'target': p[4],
+                    'internal': True,
+                    'line': p.lineno(2)
+                }
+            else:  # len(p) == 4
+                # [1..*] -- Unidade_Basica_De_Saude
+                relation_info = {
+                    'stereotype': None,
+                    'name': None,
+                    'source_cardinality': p[1],
+                    'arrow': p[2],
+                    'target_cardinality': None,
+                    'target': p[3],
+                    'internal': True,
+                    'line': p.lineno(2)
+                }
+        elif starts_with_arrow:
             # Sintaxe: -- nome -- [card] Classe  OU  -- nome -- Classe
             if len(p) == 6:
                 # -- involvesRental -- [1] RentalCar
